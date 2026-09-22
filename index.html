@@ -8824,11 +8824,11 @@ function render(filterToday=todayOnly){
           ${ch.world?`<span>🌎 ${escapeHtml(ch.world)}</span>`:''}
           ${ch.guild?`<span>🛡️ <b style="font-weight:700;color:#777">길드</b>&nbsp; ${escapeHtml(ch.guild)}</span>`:''}
         </div>
+        <button class="scheduler-sync-btn ${ch.schedulerSyncing?'syncing':''}" onclick="event.stopPropagation();syncBossScheduler('${ch.id}')" title="실제 보스 클리어 기록 동기화" ${ch.schedulerSyncing?'disabled':''}>
+          ${ch.schedulerSyncing?'동기화 중':'⟳ 보스 동기화'}
+        </button>
       </div>
       ${selected?'<span class="character-star">★</span>':''}
-      <button class="scheduler-sync-btn ${ch.schedulerSyncing?'syncing':''}" onclick="event.stopPropagation();syncBossScheduler('${ch.id}')" title="실제 보스 클리어 기록 동기화" ${ch.schedulerSyncing?'disabled':''}>
-        ${ch.schedulerSyncing?'동기화 중':'↻ 보스 동기화'}
-      </button>
       <button class="char-delete" onclick="event.stopPropagation();removeChar('${ch.id}')" aria-label="캐릭터 삭제">×</button>`;
     strip.appendChild(card);
   });
@@ -11274,16 +11274,17 @@ applyBossPartnerInputs();
 /* 카드 내용 아래에 버튼 전용 공간을 확보해 정보 박스와 겹치지 않게 함 */
 .character-card:not(.add-character),
 .character-card.add-character{
-  min-height:390px !important;
-  height:390px !important;
+  min-height:0 !important;
+  height:auto !important;
 }
 .character-card:not(.add-character){
-  padding-bottom:50px !important;
+  padding-bottom:12px !important;
 }
 .scheduler-sync-btn{
-  position:absolute;left:11px;right:11px;bottom:10px;height:32px;
+  position:static !important;width:100%;height:36px;flex:0 0 36px;
+  margin-top:7px;padding:0 8px;
   border:1px solid #f2b7ca;border-radius:10px;background:#fff5f8;color:#d94d7c;
-  font-size:11px;font-weight:900;cursor:pointer;z-index:12;
+  font-size:12px;font-weight:900;cursor:pointer;z-index:12;
   display:flex;align-items:center;justify-content:center;white-space:nowrap
 }
 .character-card:not(.add-character) .char-delete{
@@ -11303,13 +11304,31 @@ applyBossPartnerInputs();
 }
 .scheduler-sync-toast.ok{background:#b93d6b}.scheduler-sync-toast.error{background:#792d3f}
 @media(max-width:640px){
-  .character-card:not(.add-character),
-  .character-card.add-character{
-    min-height:382px !important;
-    height:382px !important;
+  .character-card:not(.add-character){
+    min-height:0 !important;height:auto !important;padding-bottom:11px !important
   }
-  .character-card:not(.add-character){padding-bottom:49px !important}
-  .scheduler-sync-btn{left:9px;right:9px;bottom:9px;height:32px;font-size:10.5px}
+  .character-card.add-character{min-height:355px !important;height:355px !important}
+  .scheduler-sync-btn{height:34px;flex-basis:34px;margin-top:6px;font-size:11px}
+}
+
+/* v86: 캐릭터가 핑크 원 밖으로 잘리지 않도록 크기와 세로 위치 보정 */
+.character-card:not(.add-character) .char-image-btn{
+  overflow:hidden !important;
+}
+.character-card:not(.add-character) .char-image-btn img{
+  width:108px !important;
+  height:108px !important;
+  object-fit:contain !important;
+  object-position:center center !important;
+  transform:translateY(7px) scale(1.85) !important;
+  transform-origin:center center !important;
+}
+@media(max-width:640px){
+  .character-card:not(.add-character) .char-image-btn img{
+    width:104px !important;
+    height:104px !important;
+    transform:translateY(8px) scale(1.78) !important;
+  }
 }
 </style>
 
