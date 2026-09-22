@@ -740,6 +740,40 @@ dialog .danger{background:#fff0f1;color:#d64d64}
   background:#fff;
   padding:9px;
 }
+.api-profile-picker{margin:0 0 10px}
+.api-profile-picker label,
+.api-assignment-title{
+  display:block;margin:0 0 6px;color:#725f55;font-size:12px;font-weight:900
+}
+.api-profile-picker select{width:100%;min-height:42px}
+.api-profile-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.api-profile-row{
+  display:grid;grid-template-columns:minmax(90px,.8fr) minmax(160px,1.6fr) auto;
+  gap:7px;align-items:center;padding:9px;border:1px solid #eadbd2;
+  border-radius:13px;background:#fff
+}
+.api-profile-row input{width:100%;min-width:0}
+.api-profile-remove{padding:10px 11px!important;background:#fff0f2!important;color:#c94d67!important}
+.api-profile-add{
+  width:100%;margin:0 0 8px;border:1px dashed #dbb8c3!important;
+  background:#fff7fa!important;color:#c94873!important
+}
+.api-assignment-title{margin-top:12px}
+.api-character-assignments{
+  display:flex;flex-direction:column;gap:7px;max-height:190px;overflow:auto;margin-bottom:8px
+}
+.api-character-assignment{
+  display:grid;grid-template-columns:minmax(90px,1fr) minmax(150px,1.4fr);
+  gap:8px;align-items:center;padding:8px 9px;border-radius:11px;background:#f8f3ef
+}
+.api-character-assignment span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;color:#655b55}
+.api-character-assignment select{width:100%;min-width:0}
+.api-character-assignments-empty{padding:10px;border-radius:11px;background:#f8f3ef;color:#8d8178;font-size:12px;text-align:center}
+@media(max-width:520px){
+  .api-profile-row{grid-template-columns:1fr auto}
+  .api-profile-row .api-profile-key{grid-column:1/-1;grid-row:2}
+  .api-character-assignment{grid-template-columns:1fr}
+}
 #addLookedUpCharBtn:disabled{
   opacity:.45;
   cursor:not-allowed;
@@ -7928,6 +7962,11 @@ button,
     <input id="charName" class="full" placeholder="캐릭터 닉네임" autocomplete="off">
   </div>
 
+  <div class="api-profile-picker">
+    <label for="charApiProfileSelect">사용할 API 계정</label>
+    <select id="charApiProfileSelect" class="full"></select>
+  </div>
+
   <div class="row">
     <button id="charLookupBtn" class="full api-lookup-btn" onclick="lookupCharacter()">🔎 캐릭터 자동 불러오기</button>
   </div>
@@ -7992,17 +8031,18 @@ button,
 
 
 <dialog id="apiSettingsDlg">
-  <h3>NEXON Open API 설정</h3>
+  <h3>NEXON Open API 계정 설정</h3>
   <div class="sub" style="margin-bottom:10px">
-    API 키는 이 브라우저의 로컬 저장소에만 저장됩니다.
+    여러 API 계정을 등록하고 캐릭터마다 사용할 계정을 지정할 수 있습니다. API 키는 이 브라우저에만 저장됩니다.
   </div>
-  <div class="row">
-    <input id="nexonApiKeyInput" class="full" type="password" placeholder="NEXON Open API Key" autocomplete="off">
-  </div>
+  <div id="apiProfileList" class="api-profile-list"></div>
+  <button type="button" class="api-profile-add" onclick="addApiProfileRow()">＋ API 계정 추가</button>
   <div class="api-key-actions">
     <button onclick="openNexonApiSite()">키 발급 페이지</button>
-    <button onclick="toggleApiKeyVisibility()">키 보기/숨기기</button>
+    <button onclick="toggleApiKeyVisibility()">전체 키 보기/숨기기</button>
   </div>
+  <div class="api-assignment-title">캐릭터별 API 계정</div>
+  <div id="apiCharacterAssignments" class="api-character-assignments"></div>
   <div id="apiKeyStatus" class="lookup-status hidden"></div>
   <div class="row">
     <button onclick="apiSettingsDlg.close()">취소</button>
@@ -8983,8 +9023,28 @@ function cycle(cid,bid){
 }
 let pendingApiCharacter=null;
 
+function populateCharacterApiProfileSelect(selectedId=''){
+  const select=document.getElementById('charApiProfileSelect');
+  if(!select)return;
+  const profiles=getApiProfiles();
+  select.innerHTML='';
+  if(!profiles.length){
+    select.innerHTML='<option value="">API 계정을 먼저 추가해 주세요</option>';
+    select.disabled=true;
+    return;
+  }
+  profiles.forEach((profile,index)=>{
+    const option=document.createElement('option');
+    option.value=profile.id;
+    option.textContent=apiProfileLabel(profile,index);
+    select.appendChild(option);
+  });
+  select.disabled=false;
+  select.value=profiles.some(p=>p.id===selectedId)?selectedId:profiles[0].id;
+}
 function openAddChar(){
   charName.value='';
+  populateCharacterApiProfileSelect();
   pendingApiCharacter=null;
   apiCharPreview.classList.add('hidden');
   lookupStatus.classList.add('hidden');
@@ -9208,39 +9268,190 @@ function addWeeklyToAll(){
 
 
 const NEXON_API_KEY_STORAGE='mapleBossNexonApiKey';
+const NEXON_API_PROFILES_STORAGE='mapleBossNexonApiProfiles_v1';
 const NEXON_API_BASE='https://open.api.nexon.com/maplestory/v1';
+let apiProfileDraft=[];
+let apiAssignmentDraft={};
+let apiKeysVisible=false;
 
-function getApiKey(){
-  return localStorage.getItem(NEXON_API_KEY_STORAGE)||'';
+function makeApiProfileId(){
+  return `api-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+}
+function readApiProfiles(){
+  let profiles=[];
+  try{
+    const parsed=JSON.parse(localStorage.getItem(NEXON_API_PROFILES_STORAGE)||'[]');
+    if(Array.isArray(parsed)){
+      profiles=parsed.filter(p=>p && p.id && p.key).map((p,i)=>({
+        id:String(p.id),
+        label:String(p.label||`계정 ${i+1}`),
+        key:String(p.key)
+      }));
+    }
+  }catch(e){}
+  const legacyKey=localStorage.getItem(NEXON_API_KEY_STORAGE)||'';
+  if(!profiles.length && legacyKey){
+    profiles=[{id:makeApiProfileId(),label:'기본 계정',key:legacyKey}];
+    localStorage.setItem(NEXON_API_PROFILES_STORAGE,JSON.stringify(profiles));
+    localStorage.removeItem(NEXON_API_KEY_STORAGE);
+  }
+  return profiles;
+}
+function writeApiProfiles(profiles){
+  if(profiles.length)localStorage.setItem(NEXON_API_PROFILES_STORAGE,JSON.stringify(profiles));
+  else localStorage.removeItem(NEXON_API_PROFILES_STORAGE);
+  localStorage.removeItem(NEXON_API_KEY_STORAGE);
+}
+function getApiProfiles(){
+  return readApiProfiles();
+}
+function getApiProfile(profileId=''){
+  const profiles=getApiProfiles();
+  return profiles.find(p=>p.id===profileId)||profiles[0]||null;
+}
+function getApiKey(profileId=''){
+  return getApiProfile(profileId)?.key||'';
+}
+function getCharacterApiKey(character){
+  return getApiKey(character?.apiProfileId||'');
+}
+function apiProfileLabel(profile,index){
+  return String(profile?.label||`계정 ${index+1}`).trim()||`계정 ${index+1}`;
+}
+function renderApiProfileEditor(){
+  apiProfileList.innerHTML='';
+  apiProfileDraft.forEach((profile,index)=>{
+    const row=document.createElement('div');
+    row.className='api-profile-row';
+
+    const label=document.createElement('input');
+    label.type='text';
+    label.placeholder=`계정 이름 ${index+1}`;
+    label.value=profile.label||'';
+    label.setAttribute('aria-label',`API 계정 ${index+1} 이름`);
+    label.addEventListener('input',()=>{
+      profile.label=label.value;
+      renderApiCharacterAssignments();
+    });
+
+    const key=document.createElement('input');
+    key.type=apiKeysVisible?'text':'password';
+    key.className='api-profile-key';
+    key.placeholder='NEXON Open API Key';
+    key.autocomplete='off';
+    key.value=profile.key||'';
+    key.setAttribute('aria-label',`${apiProfileLabel(profile,index)} API 키`);
+    key.addEventListener('input',()=>{profile.key=key.value;});
+
+    const remove=document.createElement('button');
+    remove.type='button';
+    remove.className='api-profile-remove';
+    remove.textContent='삭제';
+    remove.addEventListener('click',()=>removeApiProfileRow(profile.id));
+    row.append(label,key,remove);
+    apiProfileList.appendChild(row);
+  });
+  if(!apiProfileDraft.length){
+    const empty=document.createElement('div');
+    empty.className='api-character-assignments-empty';
+    empty.textContent='등록된 API 계정이 없습니다.';
+    apiProfileList.appendChild(empty);
+  }
+}
+function renderApiCharacterAssignments(){
+  apiCharacterAssignments.innerHTML='';
+  if(!(data.chars||[]).length){
+    apiCharacterAssignments.innerHTML='<div class="api-character-assignments-empty">등록된 캐릭터가 없습니다.</div>';
+    return;
+  }
+  (data.chars||[]).forEach(ch=>{
+    const row=document.createElement('label');
+    row.className='api-character-assignment';
+    const name=document.createElement('span');
+    name.textContent=ch.name||'이름 없는 캐릭터';
+    const select=document.createElement('select');
+    select.setAttribute('aria-label',`${ch.name||'캐릭터'} API 계정`);
+    if(apiProfileDraft.length){
+      const automatic=document.createElement('option');
+      automatic.value='';
+      automatic.textContent=`기본 계정 · ${apiProfileLabel(apiProfileDraft[0],0)}`;
+      select.appendChild(automatic);
+      apiProfileDraft.forEach((profile,index)=>{
+        const option=document.createElement('option');
+        option.value=profile.id;
+        option.textContent=apiProfileLabel(profile,index);
+        select.appendChild(option);
+      });
+      const selected=apiProfileDraft.some(p=>p.id===apiAssignmentDraft[ch.id])?apiAssignmentDraft[ch.id]:'';
+      select.value=selected;
+      select.addEventListener('change',()=>{apiAssignmentDraft[ch.id]=select.value;});
+    }else{
+      select.innerHTML='<option value="">API 계정 없음</option>';
+      select.disabled=true;
+    }
+    row.append(name,select);
+    apiCharacterAssignments.appendChild(row);
+  });
+}
+function addApiProfileRow(){
+  apiProfileDraft.push({id:makeApiProfileId(),label:`계정 ${apiProfileDraft.length+1}`,key:''});
+  renderApiProfileEditor();
+  renderApiCharacterAssignments();
+}
+function removeApiProfileRow(profileId){
+  apiProfileDraft=apiProfileDraft.filter(p=>p.id!==profileId);
+  Object.keys(apiAssignmentDraft).forEach(charId=>{
+    if(apiAssignmentDraft[charId]===profileId)apiAssignmentDraft[charId]='';
+  });
+  renderApiProfileEditor();
+  renderApiCharacterAssignments();
 }
 function openApiSettings(){
-  nexonApiKeyInput.value=getApiKey();
+  apiProfileDraft=getApiProfiles().map(p=>({...p}));
+  if(!apiProfileDraft.length)addApiProfileRow();
+  apiAssignmentDraft={};
+  (data.chars||[]).forEach(ch=>{apiAssignmentDraft[ch.id]=ch.apiProfileId||'';});
+  apiKeysVisible=false;
+  renderApiProfileEditor();
+  renderApiCharacterAssignments();
   apiKeyStatus.classList.add('hidden');
   apiKeyStatus.textContent='';
   apiSettingsDlg.showModal();
 }
 function saveApiKey(){
-  const key=nexonApiKeyInput.value.trim();
-  if(!key){
-    localStorage.removeItem(NEXON_API_KEY_STORAGE);
-    apiKeyStatus.textContent='API 키를 삭제했습니다.';
-    apiKeyStatus.className='lookup-status ok';
+  const incomplete=apiProfileDraft.some(p=>Boolean(String(p.label||'').trim())!==Boolean(String(p.key||'').trim()));
+  if(incomplete){
+    apiKeyStatus.textContent='계정 이름과 API 키를 모두 입력하거나 해당 행을 삭제해주세요.';
+    apiKeyStatus.className='lookup-status warn';
     return;
   }
-  localStorage.setItem(NEXON_API_KEY_STORAGE,key);
-  apiKeyStatus.textContent='API 키를 저장했습니다.';
+  const profiles=apiProfileDraft
+    .filter(p=>String(p.label||'').trim() && String(p.key||'').trim())
+    .map((p,index)=>({id:p.id||makeApiProfileId(),label:apiProfileLabel(p,index),key:String(p.key).trim()}));
+  writeApiProfiles(profiles);
+  const validIds=new Set(profiles.map(p=>p.id));
+  (data.chars||[]).forEach(ch=>{
+    const assigned=apiAssignmentDraft[ch.id]||'';
+    ch.apiProfileId=validIds.has(assigned)?assigned:'';
+  });
+  save();
+  populateCharacterApiProfileSelect();
+  apiKeyStatus.textContent=profiles.length?`${profiles.length}개의 API 계정을 저장했습니다.`:'모든 API 계정을 삭제했습니다.';
   apiKeyStatus.className='lookup-status ok';
   setTimeout(()=>apiSettingsDlg.close(),500);
 }
 function toggleApiKeyVisibility(){
-  nexonApiKeyInput.type=nexonApiKeyInput.type==='password'?'text':'password';
+  apiKeysVisible=!apiKeysVisible;
+  apiProfileList.querySelectorAll('.api-profile-key').forEach(input=>{
+    input.type=apiKeysVisible?'text':'password';
+  });
 }
 function openNexonApiSite(){
   window.open('https://openapi.nexon.com/','_blank','noopener');
 }
 
-async function nexonFetch(path,params={}){
-  const key=getApiKey();
+async function nexonFetch(path,params={},apiKey=''){
+  const key=apiKey||getApiKey();
   if(!key) throw new Error('API_KEY_REQUIRED');
   const url=new URL(NEXON_API_BASE+path);
   Object.entries(params).forEach(([k,v])=>{
@@ -9260,10 +9471,10 @@ async function nexonFetch(path,params={}){
   return res.json();
 }
 
-async function fetchCharacterByName(name){
-  const id=await nexonFetch('/id',{character_name:name});
+async function fetchCharacterByName(name,apiKey=''){
+  const id=await nexonFetch('/id',{character_name:name},apiKey);
   if(!id?.ocid) throw new Error('CHARACTER_NOT_FOUND');
-  const basic=await nexonFetch('/character/basic',{ocid:id.ocid});
+  const basic=await nexonFetch('/character/basic',{ocid:id.ocid},apiKey);
   return {
     ocid:id.ocid,
     name:basic.character_name||name,
@@ -9278,12 +9489,14 @@ async function fetchCharacterByName(name){
 
 async function lookupCharacter(){
   const name=charName.value.trim();
+  const apiProfileId=charApiProfileSelect.value||'';
+  const apiKey=getApiKey(apiProfileId);
   if(!name){
     alert('캐릭터 닉네임을 입력해주세요.');
     return;
   }
-  if(!getApiKey()){
-    lookupStatus.textContent='먼저 NEXON Open API 키를 한 번만 설정해주세요.';
+  if(!apiKey){
+    lookupStatus.textContent='먼저 사용할 NEXON Open API 계정을 설정해주세요.';
     lookupStatus.className='lookup-status warn';
     openApiSettings();
     return;
@@ -9297,7 +9510,8 @@ async function lookupCharacter(){
   lookupStatus.className='lookup-status loading';
 
   try{
-    const c=await fetchCharacterByName(name);
+    const c=await fetchCharacterByName(name,apiKey);
+    c.apiProfileId=apiProfileId;
     pendingApiCharacter=c;
     apiCharImage.src=c.imageUrl||'';
     apiCharName.textContent=c.name;
@@ -9336,6 +9550,7 @@ function addLookedUpCharacter(){
     ocid:c.ocid,
     imageUrl:c.imageUrl,
     apiFetchedAt:c.fetchedAt,
+    apiProfileId:c.apiProfileId||'',
     bosses:makeWeeklyBosses(),
     monthlyBosses:makeMonthlyBosses()
   };
@@ -9356,12 +9571,13 @@ function addLookedUpCharacter(){
 async function refreshCharacter(id){
   const c=data.chars.find(x=>x.id===id);
   if(!c)return;
-  if(!getApiKey()){
+  const apiKey=getCharacterApiKey(c);
+  if(!apiKey){
     openApiSettings();
     return;
   }
   try{
-    const fresh=await fetchCharacterByName(c.name);
+    const fresh=await fetchCharacterByName(c.name,apiKey);
     c.job=fresh.job;
     c.level=fresh.level;
     c.world=fresh.world;
@@ -11425,8 +11641,8 @@ applyBossPartnerInputs();
   };
 
   function normalizedBossName(value){
-    const raw=String(value||'').trim();
-    const compact=raw.replace(/[\s·:()\[\]-]/g,'')
+    const raw=String(value||'').replace(/[\u200B-\u200D\uFEFF]/g,'').trim();
+    const compact=raw.replace(/[\s·:()\[\]{}\-_/]/g,'')
       .replace(/(이지|노말|노멀|하드|카오스|익스트림|easy|normal|hard|chaos|extreme|월간)$/i,'');
     return BOSS_NAME_ALIASES[compact]||raw;
   }
@@ -11450,7 +11666,11 @@ applyBossPartnerInputs();
   function apiFlag(value){
     if(value===true || value===1)return true;
     const s=String(value??'').trim().toLowerCase();
-    return ['true','1','y','yes','done','clear','cleared','complete','completed','완료','클리어'].includes(s);
+    if(['true','1','y','yes','done','clear','cleared','complete','completed','완료','완료함','클리어','클리어함'].includes(s))return true;
+    const fraction=s.match(/^(\d+)\s*\/\s*(\d+)$/);
+    if(fraction)return Number(fraction[1])>0;
+    if(/^(미완료|미클리어|false|no|not|0)$/i.test(s))return false;
+    return /(완료|클리어|cleared|completed)/i.test(s);
   }
   function apiBossDone(item){
     if(!item || typeof item!=='object')return false;
@@ -11460,7 +11680,10 @@ applyBossPartnerInputs();
       'complete_flag','completed_flag','clear_flag','boss_clear_flag',
       'is_complete','is_completed','is_clear','is_cleared',
       'complete','completed','clear','cleared','done',
-      'clear_yn','complete_yn','completion_status','clear_status','status'
+      'clear_yn','complete_yn','completion_status','clear_status','status',
+      'completeFlag','completedFlag','clearFlag','bossClearFlag',
+      'isComplete','isCompleted','isClear','isCleared',
+      'clearYn','completeYn','completionStatus','clearStatus'
     ];
     for(const key of directKeys){
       const value=apiBossValue(item,key);
@@ -11486,13 +11709,23 @@ applyBossPartnerInputs();
   function schedulerBossRows(state){
     const rows=[];
     const seen=new Set();
+    const knownBossNames=new Set(
+      [...WEEKLY_BOSSES,...MONTHLY_BOSSES].map(b=>normalizedBossName(b.name))
+    );
+    const addItem=item=>{
+      if(!item || typeof item!=='object' || Array.isArray(item) || seen.has(item))return;
+      const name=apiBossName(item);
+      if(!name)return;
+      const cycle=String(apiBossValue(item,'cycle','reset_cycle','resetCycle','period')||'');
+      const difficulty=apiBossDifficulty(item);
+      const known=knownBossNames.has(normalizedBossName(name));
+      if(!known && !difficulty && !/boss|보스/i.test(cycle))return;
+      seen.add(item);
+      rows.push(item);
+    };
     const add=value=>{
       if(!Array.isArray(value))return;
-      value.forEach(item=>{
-        if(!item || typeof item!=='object' || seen.has(item) || !apiBossName(item))return;
-        seen.add(item);
-        rows.push(item);
-      });
+      value.forEach(addItem);
     };
     [
       state?.boss_contents,state?.bossContents,state?.boss_content,state?.bosses,
@@ -11502,7 +11735,32 @@ applyBossPartnerInputs();
     Object.entries(state||{}).forEach(([key,value])=>{
       if(/boss/i.test(key))add(value);
     });
-    return rows;
+    const walked=new Set();
+    const walk=(value,depth=0)=>{
+      if(!value || typeof value!=='object' || depth>5 || walked.has(value))return;
+      walked.add(value);
+      if(Array.isArray(value)){
+        value.forEach(item=>{
+          addItem(item);
+          walk(item,depth+1);
+        });
+        return;
+      }
+      addItem(value);
+      Object.values(value).forEach(child=>walk(child,depth+1));
+    };
+    walk(state);
+    const unique=new Map();
+    rows.forEach(item=>{
+      const key=[
+        normalizedBossName(apiBossName(item)),
+        normalizeBossDiff(apiBossDifficulty(item)),
+        String(apiBossValue(item,'cycle','reset_cycle','resetCycle','period')||'').toLowerCase()
+      ].join('|');
+      const previous=unique.get(key);
+      if(!previous || (!apiBossDone(previous) && apiBossDone(item)))unique.set(key,item);
+    });
+    return [...unique.values()];
   }
   function schedulerErrorMessage(err){
     if(err?.message==='API_KEY_REQUIRED') return '먼저 NEXON Open API 키를 설정해 주세요.';
@@ -11571,9 +11829,10 @@ applyBossPartnerInputs();
   window.syncBossScheduler=async function(characterId){
     const ch=data.chars.find(c=>c.id===characterId);
     if(!ch)return;
-    if(!getApiKey()){
+    const apiKey=getCharacterApiKey(ch);
+    if(!apiKey){
       openApiSettings();
-      showSchedulerToast('개인 API 키를 설정한 뒤 다시 동기화해 주세요.','error');
+      showSchedulerToast('이 캐릭터에 사용할 API 계정을 설정한 뒤 다시 동기화해 주세요.','error');
       return;
     }
     if(!ch.ocid){
@@ -11584,7 +11843,7 @@ applyBossPartnerInputs();
     render();
     try{
       // 오늘 기록은 date 파라미터 없이 호출해야 실시간 값이 반환됩니다.
-      const state=await nexonFetch(SCHEDULER_PATH,{ocid:ch.ocid});
+      const state=await nexonFetch(SCHEDULER_PATH,{ocid:ch.ocid},apiKey);
       const rows=schedulerBossRows(state);
       let completed=0, matched=0, newlyCompleted=0, autoAdded=0;
       let monthlyMatched=0, monthlyCompleted=0;
@@ -11614,6 +11873,8 @@ applyBossPartnerInputs();
       ch.schedulerLastSyncedAt=new Date().toISOString();
       ch.schedulerLastDate=state?.date||'';
       ch.schedulerLastMatched=matched;
+      ch.schedulerLastMonthlyMatched=monthlyMatched;
+      ch.schedulerLastMonthlyCompleted=monthlyCompleted;
       save();
       if(!rows.length){
         showSchedulerToast('조회된 보스 기록이 없습니다. 인게임 메이플 스케줄러 등록 상태를 확인해 주세요.','error');
@@ -11711,9 +11972,9 @@ applyBossPartnerInputs();
 /* 등록된 모든 캐릭터의 보스 기록을 순서대로 동기화 */
 window.syncAllBossSchedulers=async function(){
   if(window.__syncingAllBosses)return;
-  if(!getApiKey()){
+  if(!getApiProfiles().length){
     openApiSettings();
-    showSchedulerToast('개인 API 키를 설정한 뒤 다시 동기화해 주세요.','error');
+    showSchedulerToast('API 계정을 하나 이상 설정한 뒤 다시 동기화해 주세요.','error');
     return;
   }
   const targets=(data.chars||[]).filter(ch=>ch.ocid);
@@ -11724,7 +11985,7 @@ window.syncAllBossSchedulers=async function(){
   }
 
   window.__syncingAllBosses=true;
-  let requested=0;
+  let requested=0,monthlyMatched=0,monthlyCompleted=0;
   try{
     for(let i=0;i<targets.length;i++){
       const btn=document.getElementById('syncAllBossesBtn');
@@ -11733,6 +11994,8 @@ window.syncAllBossSchedulers=async function(){
         btn.textContent=`동기화 중 ${i+1}/${targets.length} · ${targets[i].name}`;
       }
       await window.syncBossScheduler(targets[i].id);
+      monthlyMatched+=Number(targets[i].schedulerLastMonthlyMatched||0);
+      monthlyCompleted+=Number(targets[i].schedulerLastMonthlyCompleted||0);
       requested++;
       if(i<targets.length-1)await new Promise(resolve=>setTimeout(resolve,250));
     }
@@ -11743,7 +12006,10 @@ window.syncAllBossSchedulers=async function(){
     save();
     render();
   }
-  showSchedulerToast(`전체 동기화 완료 · ${requested}명 조회${skipped?` · 정보 없음 ${skipped}명 제외`:''}`);
+  const monthlyText=monthlyMatched
+    ? ` · 월간 완료 ${monthlyCompleted}/${monthlyMatched}`
+    : ' · 월간 기록 없음';
+  showSchedulerToast(`전체 동기화 완료 · ${requested}명 조회${monthlyText}${skipped?` · 정보 없음 ${skipped}명 제외`:''}`);
 };
 </script>
 
