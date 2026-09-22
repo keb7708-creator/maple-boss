@@ -11426,8 +11426,26 @@ applyBossPartnerInputs();
 
   function normalizedBossName(value){
     const raw=String(value||'').trim();
-    const compact=raw.replace(/[\s·:()\[\]-]/g,'');
+    const compact=raw.replace(/[\s·:()\[\]-]/g,'')
+      .replace(/(이지|노말|노멀|하드|카오스|익스트림|easy|normal|hard|chaos|extreme|월간)$/i,'');
     return BOSS_NAME_ALIASES[compact]||raw;
+  }
+  function apiBossValue(item,...keys){
+    const sources=[item,item?.boss,item?.content,item?.data].filter(v=>v&&typeof v==='object');
+    for(const source of sources){
+      for(const key of keys){
+        if(Object.prototype.hasOwnProperty.call(source,key) && source[key]!==undefined && source[key]!==null){
+          return source[key];
+        }
+      }
+    }
+    return '';
+  }
+  function apiBossName(item){
+    return apiBossValue(item,'content_name','contentName','boss_name','bossName','name');
+  }
+  function apiBossDifficulty(item){
+    return apiBossValue(item,'difficulty','boss_difficulty','bossDifficulty','difficulty_name','difficultyName');
   }
   function apiFlag(value){
     if(value===true || value===1)return true;
@@ -11445,7 +11463,8 @@ applyBossPartnerInputs();
       'clear_yn','complete_yn','completion_status','clear_status','status'
     ];
     for(const key of directKeys){
-      if(Object.prototype.hasOwnProperty.call(item,key) && apiFlag(item[key]))return true;
+      const value=apiBossValue(item,key);
+      if(value!=='' && apiFlag(value))return true;
     }
 
     /* 완료/클리어 의미의 새 필드가 추가되어도 자동 인식 */
@@ -11455,11 +11474,35 @@ applyBossPartnerInputs();
       if(typeof value==='number' && value>0)return true;
       if(value && typeof value==='object' && apiBossDone(value))return true;
     }
+    const clearCount=Number(apiBossValue(item,'clear_count','clearCount','now_count','nowCount'));
+    const maxCount=Number(apiBossValue(item,'max_count','maxCount'));
+    if(Number.isFinite(clearCount) && clearCount>0 && (!Number.isFinite(maxCount) || maxCount<=1))return true;
     return false;
   }
   function isMonthlyApiBoss(item){
-    const cycle=String(item?.cycle||'').toLowerCase();
-    return cycle.includes('monthly') || cycle.includes('월간');
+    const cycle=String(apiBossValue(item,'cycle','reset_cycle','resetCycle','period')||'').toLowerCase();
+    return cycle.includes('monthly') || cycle.includes('month') || cycle.includes('월간');
+  }
+  function schedulerBossRows(state){
+    const rows=[];
+    const seen=new Set();
+    const add=value=>{
+      if(!Array.isArray(value))return;
+      value.forEach(item=>{
+        if(!item || typeof item!=='object' || seen.has(item) || !apiBossName(item))return;
+        seen.add(item);
+        rows.push(item);
+      });
+    };
+    [
+      state?.boss_contents,state?.bossContents,state?.boss_content,state?.bosses,
+      state?.monthly_boss_contents,state?.monthlyBossContents,
+      state?.weekly_boss_contents,state?.weeklyBossContents
+    ].forEach(add);
+    Object.entries(state||{}).forEach(([key,value])=>{
+      if(/boss/i.test(key))add(value);
+    });
+    return rows;
   }
   function schedulerErrorMessage(err){
     if(err?.message==='API_KEY_REQUIRED') return '먼저 NEXON Open API 키를 설정해 주세요.';
@@ -11478,8 +11521,8 @@ applyBossPartnerInputs();
     setTimeout(()=>el.remove(),4200);
   }
   function matchLocalBoss(list,item){
-    const apiName=normalizedBossName(item?.content_name);
-    const apiDiff=normalizeBossDiff(item?.difficulty);
+    const apiName=normalizedBossName(apiBossName(item));
+    const apiDiff=normalizeBossDiff(apiBossDifficulty(item));
     return (list||[]).find(b=>{
       const sameName=normalizedBossName(b.name)===apiName;
       const sameDiff=!apiDiff || normalizeBossDiff(b.difficulty)===apiDiff;
@@ -11489,8 +11532,10 @@ applyBossPartnerInputs();
 
   /* API에서 완료된 보스가 선택 목록에 없으면 자동으로 추가 */
   function ensureCompletedBoss(ch,item){
-    const apiName=normalizedBossName(item?.content_name);
-    const apiDiff=normalizeBossDiff(item?.difficulty);
+    if(!Array.isArray(ch.monthlyBosses))ch.monthlyBosses=makeMonthlyBosses();
+    if(!Array.isArray(ch.bosses))ch.bosses=makeWeeklyBosses();
+    const apiName=normalizedBossName(apiBossName(item));
+    const apiDiff=normalizeBossDiff(apiBossDifficulty(item));
     const monthlyTemplate=MONTHLY_BOSSES.find(t=>normalizedBossName(t.name)===apiName);
     const weeklyTemplate=WEEKLY_BOSSES.find(t=>normalizedBossName(t.name)===apiName);
     const monthly=!!monthlyTemplate || isMonthlyApiBoss(item);
@@ -11499,7 +11544,7 @@ applyBossPartnerInputs();
 
     let boss=matchLocalBoss(list,item) || list.find(b=>normalizedBossName(b.name)===apiName);
     if(!boss){
-      const name=template?.name || String(item?.content_name||'').trim();
+      const name=template?.name || String(apiBossName(item)||'').trim();
       if(!name)return {boss:null,added:false};
       const diffs=template?.diffs?.slice() || (apiDiff?[apiDiff]:[]);
       boss={
@@ -11540,11 +11585,12 @@ applyBossPartnerInputs();
     try{
       // 오늘 기록은 date 파라미터 없이 호출해야 실시간 값이 반환됩니다.
       const state=await nexonFetch(SCHEDULER_PATH,{ocid:ch.ocid});
-      const rows=Array.isArray(state?.boss_contents)?state.boss_contents:[];
+      const rows=schedulerBossRows(state);
       let completed=0, matched=0, newlyCompleted=0, autoAdded=0;
+      let monthlyMatched=0, monthlyCompleted=0;
       rows.forEach(item=>{
         const done=apiBossDone(item);
-        const monthly=isMonthlyApiBoss(item) || MONTHLY_BOSSES.some(t=>normalizedBossName(t.name)===normalizedBossName(item?.content_name));
+        const monthly=isMonthlyApiBoss(item) || MONTHLY_BOSSES.some(t=>normalizedBossName(t.name)===normalizedBossName(apiBossName(item)));
         const list=monthly?ch.monthlyBosses:ch.bosses;
         let boss=matchLocalBoss(list,item);
         if(done){
@@ -11554,8 +11600,10 @@ applyBossPartnerInputs();
         }
         if(!boss)return;
         matched++;
+        if(monthly)monthlyMatched++;
         if(done){
           completed++;
+          if(monthly)monthlyCompleted++;
           if(boss.status!=='done') newlyCompleted++;
           boss.status='done';
           boss.apiCompleted=true;
@@ -11572,7 +11620,7 @@ applyBossPartnerInputs();
       }else if(!matched){
         showSchedulerToast(`기록 ${rows.length}개를 받았지만 현재 대시보드의 보스·난이도와 일치하는 항목이 없습니다.`,'error');
       }else{
-        showSchedulerToast(`동기화 완료 · ${matched}개 확인 · 완료 ${completed}개${newlyCompleted?` · 새 완료 ${newlyCompleted}개`:''}${autoAdded?` · 목록 추가 ${autoAdded}개`:''}`);
+        showSchedulerToast(`동기화 완료 · ${matched}개 확인 · 완료 ${completed}개 · 월간 ${monthlyCompleted}/${monthlyMatched}${newlyCompleted?` · 새 완료 ${newlyCompleted}개`:''}${autoAdded?` · 목록 추가 ${autoAdded}개`:''}`);
       }
     }catch(err){
       showSchedulerToast(schedulerErrorMessage(err),'error');
@@ -11600,8 +11648,13 @@ applyBossPartnerInputs();
   display:flex;align-items:center;justify-content:space-between;gap:8px;
   color:#945a70;font-size:12px;font-weight:900
 }
+.character-card:not(.add-character) .char-boss-progress-row>div>span{
+  min-width:0;white-space:nowrap
+}
 .character-card:not(.add-character) .char-boss-progress-row strong{
-  width:auto!important;font-size:16px!important;line-height:1!important;
+  width:auto!important;max-width:none!important;flex:0 0 auto;
+  overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+  font-size:16px!important;line-height:1!important;
   color:#e24d7e!important;letter-spacing:0!important
 }
 .character-card:not(.add-character) .char-boss-progress-row.monthly>div{color:#745d9d}
@@ -11642,9 +11695,10 @@ applyBossPartnerInputs();
 .all-boss-progress-item.monthly .all-boss-progress-track{background:#e4dcf3}
 .all-boss-progress-item.monthly .all-boss-progress-track i{background:linear-gradient(90deg,#bba2eb,#8565c5)}
 @media(max-width:640px){
-  .character-card:not(.add-character) .char-boss-progress{padding:9px 12px;margin-top:9px}
-  .character-card:not(.add-character) .char-boss-progress-row>div{font-size:11px}
-  .character-card:not(.add-character) .char-boss-progress-row strong{font-size:15px!important}
+  .character-card:not(.add-character) .char-boss-progress{padding:9px 8px;margin-top:9px}
+  .character-card:not(.add-character) .char-boss-progress-row>div{gap:4px;font-size:10px}
+  .character-card:not(.add-character) .char-boss-progress-row>div>span{letter-spacing:-.35px}
+  .character-card:not(.add-character) .char-boss-progress-row strong{font-size:14px!important}
   .sync-all-bosses-btn{height:42px;margin-bottom:10px;font-size:13px;border-radius:12px}
   .all-boss-progress{gap:7px;padding:8px;margin:-1px 0 11px;border-radius:13px}
   .all-boss-progress-item{padding:9px 8px}
