@@ -7796,6 +7796,7 @@ button,
           <button onclick="showToday()">🕒 오늘 일정만</button>
           <button onclick="todayOnly=false;render()">🧾 전체 보기</button>
           <button onclick="openApiSettings()">🔑 캐릭터 API 설정</button>
+          <button onclick="openCloudSync()">☁️ 기기 간 데이터 동기화</button>
           <button onclick="resetMonthly()">🌑 월간 초기화</button>
         </div>
         <div class="speech today">오늘도<br>즐메하세요!♥</div>
@@ -8152,6 +8153,46 @@ button,
   </div>
 </dialog>
 
+<dialog id="cloudSyncDlg" class="cloud-sync-dialog">
+  <div class="cloud-sync-head">
+    <div>
+      <h3>☁️ 기기 간 데이터 동기화</h3>
+      <div class="sub">모바일과 PC에서 같은 동기화 코드와 비밀번호를 사용하세요.</div>
+    </div>
+    <button type="button" class="cloud-sync-close" onclick="cloudSyncDlg.close()" aria-label="닫기">×</button>
+  </div>
+
+  <div id="cloudSyncStatus" class="cloud-sync-status">연결되지 않음</div>
+
+  <details id="firebaseSetupBox" class="cloud-sync-setup">
+    <summary>처음 한 번만: Firebase 설정</summary>
+    <p>Firebase 콘솔의 웹 앱 설정값을 붙여넣으세요. 이 값은 이 브라우저에만 저장됩니다.</p>
+    <textarea id="firebaseConfigInput" spellcheck="false" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", appId: "..." };'></textarea>
+    <button type="button" onclick="saveFirebaseConfig()">설정 저장</button>
+  </details>
+
+  <div class="cloud-sync-fields">
+    <label>
+      <span>동기화 코드</span>
+      <input id="cloudSyncCode" type="text" inputmode="text" maxlength="40" autocomplete="username" placeholder="예: KKING-2026" autocapitalize="characters">
+    </label>
+    <label>
+      <span>비밀번호</span>
+      <input id="cloudSyncPassword" type="password" minlength="6" maxlength="72" autocomplete="current-password" placeholder="6자 이상">
+    </label>
+  </div>
+  <p class="cloud-sync-warning">동기화 코드와 비밀번호를 잊으면 복구할 수 없습니다. 다른 곳에 꼭 기록해 주세요.</p>
+  <div class="cloud-sync-actions">
+    <button type="button" onclick="createCloudSync()">새 동기화 만들기</button>
+    <button type="button" class="primary" onclick="connectCloudSync()">기존 동기화 연결</button>
+  </div>
+  <div id="cloudSyncConnectedActions" class="cloud-sync-connected-actions" hidden>
+    <button type="button" onclick="downloadCloudNow()">↓ 지금 불러오기</button>
+    <button type="button" onclick="uploadCloudNow()">↑ 지금 올리기</button>
+    <button type="button" class="danger" onclick="disconnectCloudSync()">연결 해제</button>
+  </div>
+</dialog>
+
 <dialog id="backupDlg">
   <h3>백업 데이터</h3>
   <div class="sub">아래 내용을 메모장 등에 복사해두면 복구할 수 있어요.</div>
@@ -8169,7 +8210,7 @@ button,
 function safeUUID(){
   try{
     if(window.crypto && typeof window.crypto.randomUUID === 'function'){
-      return window.safeUUID();
+      return window.crypto.randomUUID();
     }
   }catch(e){}
   return 'id-' + Date.now().toString(36) + '-' +
@@ -11330,6 +11371,26 @@ applyBossPartnerInputs();
     transform:translateY(8px) scale(1.78) !important;
   }
 }
+
+/* v87: 동기화 코드 + 비밀번호 클라우드 동기화 */
+.cloud-sync-dialog{width:min(520px,calc(100vw - 28px));max-width:520px;padding:22px;border:1px solid #f1d9e0;border-radius:20px;color:#202630;background:#fffaf8}
+.cloud-sync-dialog::backdrop{background:rgba(25,20,25,.48);backdrop-filter:blur(3px)}
+.cloud-sync-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.cloud-sync-head h3{margin:0 0 5px}.cloud-sync-close{width:36px;height:36px;padding:0;border-radius:50%;font-size:25px;line-height:1}
+.cloud-sync-status{margin:16px 0;padding:12px 14px;border:1px solid #ecdce1;border-radius:13px;background:#fff;color:#7d6b70;font-weight:800}
+.cloud-sync-status.connected{border-color:#bfe5d0;background:#effbf4;color:#197648}.cloud-sync-status.error{border-color:#ffc4ce;background:#fff1f4;color:#bd3654}
+.cloud-sync-setup{margin-bottom:15px;padding:12px 14px;border:1px dashed #e7cfd7;border-radius:13px;background:#fff}
+.cloud-sync-setup summary{cursor:pointer;font-weight:850}.cloud-sync-setup p{margin:10px 0 8px;color:#7c6d72;font-size:12px;line-height:1.55}
+.cloud-sync-setup textarea{display:block;width:100%;min-height:108px;box-sizing:border-box;margin-bottom:8px;padding:10px;border:1px solid #dfd3d6;border-radius:10px;resize:vertical;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
+.cloud-sync-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.cloud-sync-fields label{display:flex;flex-direction:column;gap:6px;font-weight:800;font-size:13px}
+.cloud-sync-fields input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #dfd3d6;border-radius:11px;background:#fff;font-size:16px}
+.cloud-sync-warning{margin:10px 1px;color:#8d777e;font-size:12px;line-height:1.5}
+.cloud-sync-actions,.cloud-sync-connected-actions{display:flex;gap:8px;margin-top:12px}.cloud-sync-actions button,.cloud-sync-connected-actions button{flex:1;min-height:44px}
+@media(max-width:560px){
+  .cloud-sync-dialog{width:calc(100vw - 20px);padding:17px;border-radius:17px}
+  .cloud-sync-fields{grid-template-columns:1fr}.cloud-sync-actions{flex-direction:column}
+  .cloud-sync-connected-actions{display:grid;grid-template-columns:1fr 1fr}.cloud-sync-connected-actions .danger{grid-column:1/-1}
+}
 </style>
 
 <script>
@@ -11439,6 +11500,243 @@ applyBossPartnerInputs();
       render();
     }
   };
+})();
+</script>
+
+<script>
+/* ===== v87: Firebase 기반 기기 간 데이터 동기화 ===== */
+(function(){
+  const CONFIG_KEY='mapleBossFirebaseConfig_v1';
+  const CODE_KEY='mapleBossCloudSyncCode_v1';
+  const DEVICE_KEY='mapleBossCloudDeviceId_v1';
+  const SDK_BASE='https://www.gstatic.com/firebasejs/10.14.1/';
+  let syncApp=null, syncAuth=null, syncDb=null, syncUser=null;
+  let syncUnsubscribe=null, uploadTimer=null, sdkPromise=null, applyingRemote=false;
+  let deviceId=localStorage.getItem(DEVICE_KEY);
+  if(!deviceId){
+    deviceId='device-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,11);
+    localStorage.setItem(DEVICE_KEY,deviceId);
+  }
+
+  const byId=id=>document.getElementById(id);
+  function setSyncStatus(message,type=''){
+    const el=byId('cloudSyncStatus');
+    if(!el)return;
+    el.textContent=message;
+    el.className='cloud-sync-status'+(type?' '+type:'');
+  }
+  function setConnectedUi(connected){
+    const actions=byId('cloudSyncConnectedActions');
+    if(actions)actions.hidden=!connected;
+  }
+  function loadScript(src){
+    return new Promise((resolve,reject)=>{
+      const old=document.querySelector(`script[data-cloud-sdk="${src}"]`);
+      if(old){
+        if(old.dataset.loaded==='true')resolve();
+        else{old.addEventListener('load',resolve,{once:true});old.addEventListener('error',reject,{once:true});}
+        return;
+      }
+      const script=document.createElement('script');
+      script.src=src;script.async=true;script.dataset.cloudSdk=src;
+      script.onload=()=>{script.dataset.loaded='true';resolve();};
+      script.onerror=()=>reject(new Error('SDK_LOAD_FAILED'));
+      document.head.appendChild(script);
+    });
+  }
+  function loadFirebaseSdk(){
+    if(window.firebase?.firestore && window.firebase?.auth)return Promise.resolve();
+    if(!sdkPromise)sdkPromise=(async()=>{
+      await loadScript(SDK_BASE+'firebase-app-compat.js');
+      await loadScript(SDK_BASE+'firebase-auth-compat.js');
+      await loadScript(SDK_BASE+'firebase-firestore-compat.js');
+    })().catch(err=>{sdkPromise=null;throw err;});
+    return sdkPromise;
+  }
+  function parseConfig(raw){
+    const text=String(raw||'').trim();
+    if(!text)throw new Error('CONFIG_REQUIRED');
+    let cfg;
+    try{cfg=JSON.parse(text);}catch(_){
+      cfg={};
+      const re=/([A-Za-z][A-Za-z0-9_]*)\s*:\s*["']([^"']+)["']/g;
+      let m;while((m=re.exec(text)))cfg[m[1]]=m[2];
+    }
+    if(!cfg.apiKey||!cfg.authDomain||!cfg.projectId||!cfg.appId)throw new Error('CONFIG_INVALID');
+    return cfg;
+  }
+  function storedConfig(){
+    const raw=localStorage.getItem(CONFIG_KEY);
+    if(!raw)return null;
+    try{return JSON.parse(raw);}catch(_){return null;}
+  }
+  function normalizedCode(){
+    const el=byId('cloudSyncCode');
+    const code=String(el?.value||'').trim().toUpperCase().replace(/\s+/g,'-');
+    if(!/^[A-Z0-9_-]{4,40}$/.test(code))throw new Error('CODE_INVALID');
+    if(el)el.value=code;
+    return code;
+  }
+  function enteredPassword(){
+    const password=String(byId('cloudSyncPassword')?.value||'');
+    if(password.length<6)throw new Error('PASSWORD_SHORT');
+    return password;
+  }
+  async function codeEmail(code){
+    const bytes=new TextEncoder().encode('maple-boss-sync:'+code);
+    const digest=await crypto.subtle.digest('SHA-256',bytes);
+    const hex=[...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,'0')).join('');
+    return hex.slice(0,48)+'@mapleboss-sync.invalid';
+  }
+  function cloudDoc(){
+    if(!syncDb||!syncUser)throw new Error('NOT_CONNECTED');
+    return syncDb.collection('users').doc(syncUser.uid).collection('dashboard').doc('main');
+  }
+  async function initializeFirebase(){
+    const cfg=storedConfig();
+    if(!cfg)throw new Error('CONFIG_REQUIRED');
+    await loadFirebaseSdk();
+    if(!syncApp){
+      try{syncApp=firebase.app('maple-boss-sync');}
+      catch(_){syncApp=firebase.initializeApp(cfg,'maple-boss-sync');}
+      syncAuth=syncApp.auth();syncDb=syncApp.firestore();
+      await syncAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    }
+    return syncAuth;
+  }
+  function validRemoteData(value){
+    return value && typeof value==='object' && Array.isArray(value.chars);
+  }
+  function applyRemotePayload(payload){
+    const remote=typeof payload==='string'?JSON.parse(payload):payload;
+    if(!validRemoteData(remote))throw new Error('REMOTE_INVALID');
+    applyingRemote=true;
+    data=remote;
+    localStorage.setItem(KEY,JSON.stringify(data));
+    render();
+    applyingRemote=false;
+  }
+  function attachRealtime(){
+    if(syncUnsubscribe)syncUnsubscribe();
+    syncUnsubscribe=cloudDoc().onSnapshot(snapshot=>{
+      if(!snapshot.exists||snapshot.metadata.hasPendingWrites)return;
+      const remote=snapshot.data();
+      if(!remote?.payload||remote.updatedBy===deviceId)return;
+      try{
+        const localJson=JSON.stringify(data);
+        const remoteJson=typeof remote.payload==='string'?remote.payload:JSON.stringify(remote.payload);
+        if(localJson!==remoteJson){
+          applyRemotePayload(remote.payload);
+          setSyncStatus('연결됨 · 다른 기기의 변경사항을 반영했어요.','connected');
+        }
+      }catch(err){setSyncStatus('클라우드 데이터를 읽을 수 없습니다.','error');}
+    },()=>setSyncStatus('실시간 동기화 연결이 끊겼습니다. 인터넷 상태를 확인해 주세요.','error'));
+  }
+  async function upload(force=false){
+    if(!syncUser||!syncDb||applyingRemote)return;
+    const payload=JSON.stringify(data);
+    await cloudDoc().set({payload,schema:1,updatedBy:deviceId,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+    if(force)setSyncStatus('연결됨 · 현재 데이터를 클라우드에 올렸어요.','connected');
+  }
+  function queueUpload(){
+    if(!syncUser||applyingRemote)return;
+    clearTimeout(uploadTimer);
+    uploadTimer=setTimeout(()=>upload(false).catch(()=>setSyncStatus('자동 저장에 실패했습니다. 인터넷 연결을 확인해 주세요.','error')),800);
+  }
+  async function finishConnection(user,code,mode){
+    syncUser=user;localStorage.setItem(CODE_KEY,code);
+    const ref=cloudDoc();const snap=await ref.get();
+    if(mode==='create'){
+      if(snap.exists)throw new Error('SYNC_ALREADY_EXISTS');
+      await upload(true);
+    }else if(snap.exists&&snap.data()?.payload){
+      const ok=confirm('클라우드 데이터를 이 기기로 불러올까요?\n\n이 기기의 현재 데이터는 클라우드 데이터로 교체됩니다. 먼저 백업이 필요하면 취소를 눌러 주세요.');
+      if(!ok){await syncAuth.signOut();syncUser=null;throw new Error('USER_CANCELLED');}
+      applyRemotePayload(snap.data().payload);
+    }else{
+      await upload(true);
+    }
+    attachRealtime();setConnectedUi(true);
+    setSyncStatus(`연결됨 · 동기화 코드 ${code}`,'connected');
+    const password=byId('cloudSyncPassword');if(password)password.value='';
+  }
+  function friendlyError(err){
+    const code=err?.code||err?.message||'';
+    if(code.includes('CONFIG_REQUIRED'))return '먼저 Firebase 설정값을 저장해 주세요.';
+    if(code.includes('CONFIG_INVALID'))return 'Firebase 설정값 형식이 올바르지 않습니다.';
+    if(code.includes('CODE_INVALID'))return '동기화 코드는 영문·숫자·-·_ 조합 4~40자로 입력해 주세요.';
+    if(code.includes('PASSWORD_SHORT'))return '비밀번호는 6자 이상 입력해 주세요.';
+    if(code.includes('email-already-in-use')||code.includes('SYNC_ALREADY_EXISTS'))return '이미 존재하는 동기화 코드입니다. “기존 동기화 연결”을 사용해 주세요.';
+    if(code.includes('invalid-credential')||code.includes('wrong-password')||code.includes('user-not-found'))return '동기화 코드 또는 비밀번호가 올바르지 않습니다.';
+    if(code.includes('operation-not-allowed'))return 'Firebase Authentication에서 이메일/비밀번호 로그인을 활성화해 주세요.';
+    if(code.includes('permission-denied'))return 'Firestore 보안 규칙이 올바르지 않습니다.';
+    if(code.includes('USER_CANCELLED'))return '연결을 취소했습니다. 이 기기의 데이터는 변경되지 않았습니다.';
+    if(code.includes('SDK_LOAD_FAILED'))return 'Firebase 연결 파일을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.';
+    return '동기화 중 오류가 발생했습니다. Firebase 설정과 인터넷 연결을 확인해 주세요.';
+  }
+  async function runAuth(mode){
+    try{
+      setSyncStatus('연결 중…');
+      const code=normalizedCode(),password=enteredPassword(),auth=await initializeFirebase();
+      const email=await codeEmail(code);
+      const result=mode==='create'
+        ? await auth.createUserWithEmailAndPassword(email,password)
+        : await auth.signInWithEmailAndPassword(email,password);
+      await finishConnection(result.user,code,mode);
+    }catch(err){
+      setConnectedUi(false);setSyncStatus(friendlyError(err),'error');
+    }
+  }
+
+  window.openCloudSync=function(){
+    const code=localStorage.getItem(CODE_KEY)||'';
+    if(byId('cloudSyncCode'))byId('cloudSyncCode').value=code;
+    const cfg=storedConfig();
+    if(cfg&&byId('firebaseConfigInput'))byId('firebaseConfigInput').value=JSON.stringify(cfg,null,2);
+    byId('cloudSyncDlg').showModal();
+  };
+  window.saveFirebaseConfig=function(){
+    try{
+      const cfg=parseConfig(byId('firebaseConfigInput')?.value);
+      localStorage.setItem(CONFIG_KEY,JSON.stringify(cfg));
+      setSyncStatus('Firebase 설정을 저장했습니다. 이제 동기화를 연결하세요.','connected');
+      byId('firebaseSetupBox').open=false;
+    }catch(err){setSyncStatus(friendlyError(err),'error');}
+  };
+  window.createCloudSync=()=>runAuth('create');
+  window.connectCloudSync=()=>runAuth('connect');
+  window.uploadCloudNow=()=>upload(true).catch(err=>setSyncStatus(friendlyError(err),'error'));
+  window.downloadCloudNow=async function(){
+    try{
+      const snap=await cloudDoc().get();
+      if(!snap.exists||!snap.data()?.payload)throw new Error('REMOTE_INVALID');
+      applyRemotePayload(snap.data().payload);
+      setSyncStatus('연결됨 · 클라우드 데이터를 불러왔어요.','connected');
+    }catch(err){setSyncStatus(friendlyError(err),'error');}
+  };
+  window.disconnectCloudSync=async function(){
+    if(!confirm('이 기기의 클라우드 동기화 연결을 해제할까요?\n현재 데이터는 이 기기에 그대로 남습니다.'))return;
+    clearTimeout(uploadTimer);if(syncUnsubscribe)syncUnsubscribe();syncUnsubscribe=null;
+    if(syncAuth)await syncAuth.signOut();syncUser=null;
+    localStorage.removeItem(CODE_KEY);setConnectedUi(false);
+    if(byId('cloudSyncCode'))byId('cloudSyncCode').value='';
+    setSyncStatus('연결이 해제되었습니다.');
+  };
+
+  const originalDashboardSave=save;
+  save=function(){originalDashboardSave();queueUpload();};
+
+  window.addEventListener('DOMContentLoaded',async()=>{
+    const cfg=storedConfig(),code=localStorage.getItem(CODE_KEY);
+    if(!cfg||!code)return;
+    if(byId('cloudSyncCode'))byId('cloudSyncCode').value=code;
+    try{
+      const auth=await initializeFirebase();
+      auth.onAuthStateChanged(user=>{
+        if(user){syncUser=user;attachRealtime();setConnectedUi(true);setSyncStatus(`연결됨 · 동기화 코드 ${code}`,'connected');}
+      });
+    }catch(_){/* 설정 창에서 오류를 안내합니다. */}
+  });
 })();
 </script>
 
