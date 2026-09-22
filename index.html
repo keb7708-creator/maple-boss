@@ -11353,10 +11353,32 @@ applyBossPartnerInputs();
     return BOSS_NAME_ALIASES[compact]||raw;
   }
   function apiFlag(value){
-    return value===true || String(value).toLowerCase()==='true' || value===1 || value==='1';
+    if(value===true || value===1)return true;
+    const s=String(value??'').trim().toLowerCase();
+    return ['true','1','y','yes','done','clear','cleared','complete','completed','완료','클리어'].includes(s);
   }
   function apiBossDone(item){
-    return apiFlag(item?.complete_flag) || apiFlag(item?.clear_flag) || apiFlag(item?.completed_flag);
+    if(!item || typeof item!=='object')return false;
+
+    /* 스케줄러 API 버전별 완료 필드명 차이를 모두 지원 */
+    const directKeys=[
+      'complete_flag','completed_flag','clear_flag','boss_clear_flag',
+      'is_complete','is_completed','is_clear','is_cleared',
+      'complete','completed','clear','cleared','done',
+      'clear_yn','complete_yn','completion_status','clear_status','status'
+    ];
+    for(const key of directKeys){
+      if(Object.prototype.hasOwnProperty.call(item,key) && apiFlag(item[key]))return true;
+    }
+
+    /* 완료/클리어 의미의 새 필드가 추가되어도 자동 인식 */
+    for(const [key,value] of Object.entries(item)){
+      if(!/(complete|completed|completion|clear|cleared|done)/i.test(key))continue;
+      if(apiFlag(value))return true;
+      if(typeof value==='number' && value>0)return true;
+      if(value && typeof value==='object' && apiBossDone(value))return true;
+    }
+    return false;
   }
   function isMonthlyApiBoss(item){
     const cycle=String(item?.cycle||'').toLowerCase();
@@ -11387,6 +11409,42 @@ applyBossPartnerInputs();
     });
   }
 
+  /* API에서 완료된 보스가 선택 목록에 없으면 자동으로 추가 */
+  function ensureCompletedBoss(ch,item){
+    const apiName=normalizedBossName(item?.content_name);
+    const apiDiff=normalizeBossDiff(item?.difficulty);
+    const monthlyTemplate=MONTHLY_BOSSES.find(t=>normalizedBossName(t.name)===apiName);
+    const weeklyTemplate=WEEKLY_BOSSES.find(t=>normalizedBossName(t.name)===apiName);
+    const monthly=!!monthlyTemplate || isMonthlyApiBoss(item);
+    const template=monthlyTemplate || weeklyTemplate;
+    const list=monthly ? ch.monthlyBosses : ch.bosses;
+
+    let boss=matchLocalBoss(list,item) || list.find(b=>normalizedBossName(b.name)===apiName);
+    if(!boss){
+      const name=template?.name || String(item?.content_name||'').trim();
+      if(!name)return {boss:null,added:false};
+      const diffs=template?.diffs?.slice() || (apiDiff?[apiDiff]:[]);
+      boss={
+        id:safeUUID(), name, tier:template?.tier || (monthly?'월간':'자동 추가'),
+        power:template?.power ?? 999, diffs,
+        prices:template?.prices || {}, difficulty:apiDiff || diffs[0] || '',
+        status:'todo', time:'', hidden:false, partySize:1,
+        selected:monthly?undefined:true, lootItems:'', lootMemo:''
+      };
+      list.push(boss);
+    }
+
+    const wasVisible=monthly ? !boss.hidden : (boss.selected && !boss.hidden);
+    boss.hidden=false;
+    if(!monthly)boss.selected=true;
+    if(apiDiff){
+      if(!Array.isArray(boss.diffs))boss.diffs=[];
+      if(!boss.diffs.includes(apiDiff))boss.diffs.push(apiDiff);
+      boss.difficulty=apiDiff;
+    }
+    return {boss,added:!wasVisible};
+  }
+
   window.syncBossScheduler=async function(characterId){
     const ch=data.chars.find(c=>c.id===characterId);
     if(!ch)return;
@@ -11405,13 +11463,20 @@ applyBossPartnerInputs();
       // 오늘 기록은 date 파라미터 없이 호출해야 실시간 값이 반환됩니다.
       const state=await nexonFetch(SCHEDULER_PATH,{ocid:ch.ocid});
       const rows=Array.isArray(state?.boss_contents)?state.boss_contents:[];
-      let completed=0, matched=0, newlyCompleted=0;
+      let completed=0, matched=0, newlyCompleted=0, autoAdded=0;
       rows.forEach(item=>{
-        const list=isMonthlyApiBoss(item)?ch.monthlyBosses:ch.bosses;
-        const boss=matchLocalBoss(list,item);
+        const done=apiBossDone(item);
+        const monthly=isMonthlyApiBoss(item) || MONTHLY_BOSSES.some(t=>normalizedBossName(t.name)===normalizedBossName(item?.content_name));
+        const list=monthly?ch.monthlyBosses:ch.bosses;
+        let boss=matchLocalBoss(list,item);
+        if(done){
+          const ensured=ensureCompletedBoss(ch,item);
+          boss=ensured.boss || boss;
+          if(ensured.added)autoAdded++;
+        }
         if(!boss)return;
         matched++;
-        if(apiBossDone(item)){
+        if(done){
           completed++;
           if(boss.status!=='done') newlyCompleted++;
           boss.status='done';
@@ -11429,7 +11494,7 @@ applyBossPartnerInputs();
       }else if(!matched){
         showSchedulerToast(`기록 ${rows.length}개를 받았지만 현재 대시보드의 보스·난이도와 일치하는 항목이 없습니다.`,'error');
       }else{
-        showSchedulerToast(`동기화 완료 · ${matched}개 확인 · 완료 ${completed}개${newlyCompleted?` · 새 완료 ${newlyCompleted}개`:''}`);
+        showSchedulerToast(`동기화 완료 · ${matched}개 확인 · 완료 ${completed}개${newlyCompleted?` · 새 완료 ${newlyCompleted}개`:''}${autoAdded?` · 목록 추가 ${autoAdded}개`:''}`);
       }
     }catch(err){
       showSchedulerToast(schedulerErrorMessage(err),'error');
