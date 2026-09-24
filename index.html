@@ -10087,6 +10087,9 @@ function renderSettlement(){
 
   let itemCount=0,soldTotal=0,myTotal=0;
   const groups=[];
+  // 아직 체크되지 않은 깐부 분배 예정 금액을 합산
+  let pendingPartnerTotal=0;
+  const pendingPartnerTotals={};
   const settlementChars=settlementCharacterFilter==='all'
     ? data.chars
     : data.chars.filter(c=>c.id===settlementCharacterFilter);
@@ -10101,6 +10104,16 @@ function renderSettlement(){
         if(x.status==='sold'){
           soldTotal+=Number(x.salePrice)||0;
           myTotal+=Math.floor(((Number(x.salePrice)||0)*0.97)/Math.max(1,Number(b.partySize)||1));
+
+          const partners=getItemPartnerNames(x,b);
+          const payouts=getItemDistributionAmounts(x,b);
+          const paid=Array.isArray(x.distributionPaidPartners)?x.distributionPaidPartners:[];
+          partners.forEach((name,idx)=>{
+            if(paid.includes(name))return;
+            const amount=Number(payouts[idx+1])||0;
+            pendingPartnerTotal+=amount;
+            pendingPartnerTotals[name]=(pendingPartnerTotals[name]||0)+amount;
+          });
         }
       });
 
@@ -10126,9 +10139,16 @@ function renderSettlement(){
     return;
   }
 
-  // 아이템 기준 10개씩 페이지 분리 (보스 그룹은 현재 페이지에 보이는 아이템만 유지)
+  // 아이템 기준 10개씩 페이지 분리 + 먹은 날짜 최신순 정렬
+  // 신규 기록은 acquiredDate를 사용하고, 기존 기록은 보스 일정 날짜 → 보관 날짜 순으로 보정합니다.
+  const settlementLootDate=({b,item})=>{
+    const raw=item?.acquiredDate || b?.time || item?.archivedAt || '';
+    const t=raw ? new Date(raw).getTime() : 0;
+    return Number.isFinite(t) ? t : 0;
+  };
   const flatItems=[];
   groups.forEach(({c,b,records})=>records.forEach(item=>flatItems.push({c,b,item})));
+  flatItems.sort((a,b)=>settlementLootDate(b)-settlementLootDate(a));
   const totalPages=Math.max(1,Math.ceil(flatItems.length/SETTLEMENT_PAGE_SIZE));
   settlementPage=Math.min(Math.max(1,settlementPage),totalPages);
   const start=(settlementPage-1)*SETTLEMENT_PAGE_SIZE;
@@ -10140,6 +10160,22 @@ function renderSettlement(){
     if(!g){ g={c,b,records:[]}; pageGroups.push(g); }
     g.records.push(item);
   });
+
+  const pendingPartnerEntries=Object.entries(pendingPartnerTotals)
+    .sort((a,b)=>b[1]-a[1]);
+  const pendingDistributionHtml=`
+    <div class="settlement-pending-distribution">
+      <div class="pending-distribution-head">
+        <div>
+          <strong>🤝 깐부 분배 예정</strong>
+          <small>체크하지 않은 분배금만 합산</small>
+        </div>
+        <b>${fmtSaleMeso(pendingPartnerTotal)}</b>
+      </div>
+      ${pendingPartnerEntries.length
+        ? `<div class="pending-distribution-breakdown">${pendingPartnerEntries.map(([name,amount])=>`<span><em>${escapeHtml(name)}</em><b>${fmtSaleMeso(amount)}</b></span>`).join('')}</div>`
+        : `<div class="pending-distribution-empty">분배 예정 금액이 없어요 ✓</div>`}
+    </div>`;
 
   const listHtml=pageGroups.map(({c,b,records})=>`
     <div class="settlement-boss-group">
@@ -10202,7 +10238,7 @@ function renderSettlement(){
     </div>
     <div class="settlement-page-info">총 ${flatItems.length}개 · ${settlementPage}/${totalPages} 페이지</div>` : '';
 
-  root.innerHTML=listHtml+paginationHtml;
+  root.innerHTML=pendingDistributionHtml+listHtml+paginationHtml;
 }
 
 function setSettlementPage(page){
@@ -10373,7 +10409,8 @@ function addSelectedBossLoot(){
     name:lootSelectedName,
     qty,
     status,
-    salePrice
+    salePrice,
+    acquiredDate: ymdLocal(new Date())
   });
 
   lootSelectedName='';
@@ -11404,6 +11441,35 @@ if(typeof render==='function'){
 }
 @media(max-width:640px){
   .calendar-sale-event{font-size:8px;padding:3px 4px}
+}
+</style>
+
+<style>
+/* ===== 정산 탭: 미분배 깐부 금액 합계 ===== */
+.settlement-pending-distribution{
+  margin:0 0 14px;
+  padding:14px 16px;
+  border:1px solid #efd8df;
+  border-radius:16px;
+  background:linear-gradient(180deg,#fffafd,#fff5f8);
+  box-shadow:0 3px 10px rgba(119,74,91,.05);
+}
+.pending-distribution-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pending-distribution-head>div{display:flex;flex-direction:column;gap:3px}
+.pending-distribution-head strong{font-size:14px;color:#694b57}
+.pending-distribution-head small{font-size:10px;color:#a1848f}
+.pending-distribution-head>b{font-size:18px;color:#df5578;white-space:nowrap}
+.pending-distribution-breakdown{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.pending-distribution-breakdown span{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid #f0dfe5;border-radius:999px;background:#fff;color:#765d66;font-size:10px}
+.pending-distribution-breakdown em{font-style:normal;font-weight:900}
+.pending-distribution-breakdown b{color:#d65a79}
+.pending-distribution-empty{margin-top:9px;padding:7px 9px;border-radius:10px;background:#f1faf4;color:#4a8a60;font-size:10px;font-weight:800}
+@media(max-width:640px){
+  .settlement-pending-distribution{padding:12px;margin-bottom:10px}
+  .pending-distribution-head{align-items:flex-start}
+  .pending-distribution-head>b{font-size:16px}
+  .pending-distribution-breakdown{gap:5px}
+  .pending-distribution-breakdown span{width:100%;justify-content:space-between;border-radius:10px}
 }
 </style>
 
